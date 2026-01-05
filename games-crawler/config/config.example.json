@@ -1,0 +1,5 @@
+{
+    "IGDBClientId":"your_client_id",
+    "IGDBClientSecret": "your_client_secret",
+    "FluentBitURL": "http://localhost:9090"
+}  

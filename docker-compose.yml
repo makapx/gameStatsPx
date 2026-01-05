@@ -1,0 +1,27 @@
+version: '3'
+services:
+
+  crawler:
+    build: ./games-crawler/
+    networks:
+      - kafka-network
+    container_name: "gameStatsPx-crawler"
+    depends_on:
+      - fluentbit
+
+  fluentbit:
+    image: fluent/fluent-bit:1.8
+    container_name: fluentbit
+    ports: 
+      - 9090:9090
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
+    # depends_on:
+    #   - kafka
+    # networks:
+    #   - kafka-network
+
+networks:
+  kafka-network:
+    driver: bridge
+
