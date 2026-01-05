@@ -98,7 +98,7 @@ def send_to_fluentbit(data):
     """Send data to FluentBit"""
     try:
         requests.post(
-            config.get("FluentBitURL", "http://localhost:9090"),
+            config.get("FluentBitURL", "http://fluentbit:9090"),
             json=data,
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -123,7 +123,7 @@ def job():
         print(f"Main job error {e}")
 
 # Cron
-schedule.every().hour.do(job)
+schedule.every(10).minutes.do(job)
 job()
 
 while True:
