@@ -8,7 +8,17 @@ services:
     container_name: "gameStatsPx-crawler"
     depends_on:
       - fluentbit
-  
+
+  spark:
+    build: ./spark/
+    networks:
+      - kafka-network
+    container_name: "gameStatsPx-spark"
+    depends_on:
+      - elasticsearch
+    volumes:
+      - ./spark/data/container_data:/dataset_output/
+      
   fluentbit:
     image: fluent/fluent-bit:1.8
     container_name: fluentbit
@@ -29,11 +39,11 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:39092
       DYNAMIC_CONFIG_ENABLED: 'true'
     ports: 
-        - 8585:8080
+      - 8585:8080
     networks: 
-        - kafka-network
+      - kafka-network
     depends_on:
-        - kafka
+      - kafka
 
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -56,6 +66,53 @@ services:
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
     networks:
       - kafka-network
+
+  elasticsearch-setup:
+    image: busybox
+    user: "0:0" 
+    volumes:
+      - ./esdata:/usr/Pshare/elasticsearch/data
+    command: ["sh", "-c", "chown -R 1000:1000 /usr/share/elasticsearch/data"]
+    networks:
+      - kafka-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.4-amd64
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme
+    volumes_from:
+      - elasticsearch-setup
+    command: ["sh", "-c", "elasticsearch-users list | grep -q '^kibana_system_user$' || elasticsearch-users useradd kibana_system_user -p kibanapass123 -r kibana_system,superuser; exec elasticsearch"]
+    ports:
+      - 9200:9200
+    networks:
+      - kafka-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.0.4-amd64
+    container_name: kibana
+    ports:
+      - 5601:5601
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.license.self_generated.type=basic
+      - ELASTICSEARCH_USERNAME=kibana_system_user
+      - ELASTICSEARCH_PASSWORD=kibanapass123
+      - xpack.security.enabled=true
+      - xpack.graph.enabled=false
+      - xpack.ml.enabled=false
+      - xpack.reporting.enabled=false
+      - xpack.watcher.enabled=false
+      - xpack.maps.enabled=false
+    networks:
+      - kafka-network
+    depends_on:
+       - elasticsearch
 networks:
   kafka-network:
     driver: bridge

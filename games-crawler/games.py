@@ -75,7 +75,6 @@ def transform_game(game):
             pubs.append(name)
     
     return {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "source": "igdb",
         "game": {
             "id": game.get("id"),
