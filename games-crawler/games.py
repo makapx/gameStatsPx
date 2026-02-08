@@ -39,10 +39,7 @@ def fetch_games(limit=50):
     
     token = get_access_token()
     query = f"""
-    fields id, name, rating, rating_count, first_release_date, 
-           genres.name, platforms.name, summary, cover.url,
-           involved_companies.company.name, involved_companies.developer,
-           involved_companies.publisher;
+    fields *;
     where rating_count > 5 & id > {last_processed_id};
     limit {limit};
     sort id asc;
@@ -65,32 +62,10 @@ def fetch_games(limit=50):
 
 def transform_game(game):
     """Transform game data."""
-    devs = []
-    pubs = []
-    for comp in game.get('involved_companies', []):
-        name = comp.get('company', {}).get('name', '')
-        if comp.get('developer'):
-            devs.append(name)
-        if comp.get('publisher'):
-            pubs.append(name)
     
     return {
         "source": "igdb",
-        "game": {
-            "id": game.get("id"),
-            "name": game.get("name", ""),
-            "rating": round(game["rating"], 2) if game.get("rating") else None,
-            "rating_count": game.get("rating_count", 0),
-            "release_date": datetime.datetime.fromtimestamp(
-                game["first_release_date"]
-            ).strftime("%Y-%m-%d") if game.get("first_release_date") else None,
-            "genres": [g["name"] for g in game.get("genres", [])],
-            "platforms": [p["name"] for p in game.get("platforms", [])],
-            "developers": devs,
-            "publishers": pubs,
-            "summary": game.get("summary", ""),
-            "cover_url": game.get("cover", {}).get("url", "")
-        }
+        "game": game
     }
 
 def send_to_fluentbit(data):

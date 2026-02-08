@@ -1,17 +1,11 @@
 from __future__ import print_function
 from elasticsearch import Elasticsearch
-from datetime import datetime,timedelta
 import json
 from pyspark import SparkContext
 from pyspark.sql import SparkSession
-from pyspark.streaming import StreamingContext
 from pyspark.sql.dataframe import DataFrame
 import time
-from pyspark.ml.feature import VectorAssembler
-from pyspark.ml.regression import RandomForestRegressor,LinearRegression,GBTRegressor
-from pyspark.sql.types import IntegerType,DoubleType
-from pyspark.sql.functions import array_contains
-from pyspark.sql.functions import col
+
 
 sc = SparkContext(appName="PythonStructuredStreamsKafka")
 spark = SparkSession(sc)
@@ -33,7 +27,6 @@ def check_elasticsearch_connection():
     except Exception as e:
         print(f"Errore durante il ping a Elasticsearch: {e}")
         return False
-
 
 def send_to_elasticsearch(batch_df: DataFrame, batch_id: int):
     es = Elasticsearch(hosts=["http://elasticsearch:9200"],http_auth=("kibana_system_user", "kibanapass123"),max_retries=10,retry_on_timeout=True)
