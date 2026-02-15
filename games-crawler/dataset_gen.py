@@ -13,7 +13,14 @@ with open('./config/config.json') as f:
 access_token = None
 token_expiry = None
 
-# Elasticsearch connection
+# Reference data caches
+genres_map = {}
+platforms_map = {}
+game_modes_map = {}
+themes_map = {}
+player_perspectives_map = {}
+involved_companies_map = {}
+
 es = Elasticsearch(
     hosts=["http://localhost:9200"],
     http_auth=("kibana_system_user", "kibanapass123"),
@@ -28,7 +35,7 @@ def get_access_token():
     if access_token and token_expiry and datetime.datetime.now() < token_expiry:
         return access_token
     
-    print("🔑 Getting access token...")
+    print("Getting access token...")
     response = requests.post("https://id.twitch.tv/oauth2/token", params={
         "client_id": config["IGDBClientId"],
         "client_secret": config["IGDBClientSecret"],
@@ -41,19 +48,84 @@ def get_access_token():
     print(f"Token obtained (expires in {data['expires_in']}s)")
     return access_token
 
+def load_reference_data(endpoint, limit=500):
+    """Load reference data from IGDB (genres, platforms, etc.)"""
+    token = get_access_token()
+    all_data = []
+    offset = 0
+    
+    while True:
+        query = f"fields id, name; limit {limit}; offset {offset};"
+        
+        try:
+            response = requests.post(
+                f"https://api.igdb.com/v4/{endpoint}",
+                headers={
+                    "Client-ID": config["IGDBClientId"],
+                    "Authorization": f"Bearer {token}"
+                },
+                data=query,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                batch = response.json()
+                if not batch:
+                    break
+                all_data.extend(batch)
+                if len(batch) < limit:
+                    break
+                offset += limit
+                time.sleep(0.3)  # Rate limiting
+            else:
+                print(f"Error loading {endpoint}: {response.status_code}")
+                break
+                
+        except Exception as e:
+            print(f"Error loading {endpoint}: {e}")
+            break
+    
+    return {item['id']: item['name'] for item in all_data}
+
+def load_all_reference_data():
+    """Load all reference data at startup"""
+    global genres_map, platforms_map, game_modes_map, themes_map, player_perspectives_map
+    
+    print("\n Loading reference data from IGDB...")
+    
+    genres_map = load_reference_data('genres')
+    print(f"Genres: {len(genres_map)} loaded")
+    
+    platforms_map = load_reference_data('platforms')
+    print(f"Platforms: {len(platforms_map)} loaded")
+    
+    game_modes_map = load_reference_data('game_modes')
+    print(f"Game Modes: {len(game_modes_map)} loaded")
+    
+    themes_map = load_reference_data('themes')
+    print(f"Themes: {len(themes_map)} loaded")
+    
+    player_perspectives_map = load_reference_data('player_perspectives')
+    print(f"Player Perspectives: {len(player_perspectives_map)} loaded")
+    
+    print("Reference data loaded successfully\n")
+
+def translate_ids_to_names(ids, reference_map):
+    """Translate list of IDs to names using reference map"""
+    if not ids:
+        return []
+    return [reference_map.get(id, f"Unknown_{id}") for id in ids]
+
 def fetch_games_batch(offset=0, limit=500):
     """Get batch of games from IGDB released from 2020 onwards."""
     token = get_access_token()
+    timestamp_2020 = int(datetime.datetime(2005, 1, 1).timestamp())
     
-    # Timestamp per 1 gennaio 2020
-    timestamp_2020 = int(datetime.datetime(2020, 1, 1).timestamp())
-    
-    # Query IGDB corretta
     query = f"""fields id, name, category, status, rating, rating_count, aggregated_rating, aggregated_rating_count, total_rating, total_rating_count, hypes, follows, first_release_date, franchises, genres, platforms, themes, game_modes, player_perspectives, involved_companies, screenshots, videos, artworks, websites, similar_games, expansions, bundles;
-where first_release_date >= {timestamp_2020};
-limit {limit};
-offset {offset};
-sort first_release_date asc;"""
+            where first_release_date >= {timestamp_2020};
+            limit {limit};
+            offset {offset};
+            sort first_release_date asc;"""
     
     try:
         response = requests.post(
@@ -174,6 +246,40 @@ def transform_game(game):
     """Transform game data for Elasticsearch."""
     
     metrics = calculate_metrics(game)
+    genres_raw = game.get('genres', [])
+    platforms_raw = game.get('platforms', [])
+    game_modes_raw = game.get('game_modes', [])
+    themes_raw = game.get('themes', [])
+    perspectives_raw = game.get('player_perspectives', [])
+    
+    def process_field(raw_data, reference_map):
+        if not raw_data:
+            return [], []
+        
+        ids = []
+        names = []
+        
+        for item in raw_data:
+            if isinstance(item, int):
+                ids.append(item)
+                names.append(reference_map.get(item, f"Unknown_{item}"))
+            elif isinstance(item, str):
+                names.append(item)
+                id_found = None
+                for id_key, name_val in reference_map.items():
+                    if name_val == item:
+                        id_found = id_key
+                        break
+                if id_found:
+                    ids.append(id_found)
+        
+        return ids, names
+    
+    genre_ids, genre_names = process_field(genres_raw, genres_map)
+    platform_ids, platform_names = process_field(platforms_raw, platforms_map)
+    game_mode_ids, game_mode_names = process_field(game_modes_raw, game_modes_map)
+    theme_ids, theme_names = process_field(themes_raw, themes_map)
+    perspective_ids, perspective_names = process_field(perspectives_raw, player_perspectives_map)
     
     doc = {
         # Basic info
@@ -192,16 +298,23 @@ def transform_game(game):
         'hypes': game.get('hypes', 0),
         'follows': game.get('follows', 0),
         
-        # Metadata
+        # Metadata - IDs
         'category': game.get('category'),
         'status': game.get('status'),
         'franchises': game.get('franchises', []),
-        'genres': game.get('genres', []),
-        'platforms': game.get('platforms', []),
-        'themes': game.get('themes', []),
-        'game_modes': game.get('game_modes', []),
-        'player_perspectives': game.get('player_perspectives', []),
+        'genre_ids': genre_ids,
+        'platform_ids': platform_ids,
+        'theme_ids': theme_ids,
+        'game_mode_ids': game_mode_ids,
+        'player_perspective_ids': perspective_ids,
         'involved_companies': game.get('involved_companies', []),
+        
+        # Metadata - Names
+        'genres': genre_names,
+        'platforms': platform_names,
+        'game_modes': game_mode_names,
+        'themes': theme_names,
+        'player_perspectives': perspective_names,
         
         # Assets
         'screenshots': game.get('screenshots', []),
@@ -238,10 +351,10 @@ def create_elasticsearch_action(game, index_name='games'):
 
 def fetch_all_games_from_2020():
     """Fetch all games from 2020 to now and send to Elasticsearch."""
+    print("IGDB GAMES BULK IMPORT (2020 - Present)")
     
-    print("\n" + "="*80)
-    print("🎮 IGDB GAMES BULK IMPORT (2020 - Present)")
-    print("="*80 + "\n")
+    # Load reference data first
+    load_all_reference_data()
     
     # Check Elasticsearch connection
     try:
@@ -262,7 +375,6 @@ def fetch_all_games_from_2020():
     
     while True:
         print(f"\n Batch #{batch_number} (offset: {offset})")
-        print("-" * 40)
         
         # Fetch batch
         games = fetch_games_batch(offset=offset, limit=limit)
@@ -271,7 +383,7 @@ def fetch_all_games_from_2020():
             print("No more games to fetch")
             break
         
-        print(f"   Retrieved: {len(games)} games")
+        print(f"Retrieved: {len(games)} games")
         total_games += len(games)
         
         # Prepare bulk actions
@@ -287,7 +399,7 @@ def fetch_all_games_from_2020():
             
             print(f"Sent to ES: {success}/{len(games)} games")
             
-            # Print examples
+            # Print examples with translated data
             for i, game in enumerate(games[:3]):
                 name = game.get('name', 'Unknown')[:40]
                 release = game.get('first_release_date')
@@ -295,7 +407,18 @@ def fetch_all_games_from_2020():
                     release_str = datetime.datetime.fromtimestamp(release).strftime('%Y-%m-%d')
                 else:
                     release_str = 'N/A'
-                print(f"      [{i+1}] {name:<40} | Release: {release_str}")
+                
+                # Show translated genres
+                genres_raw = game.get('genres', [])[:2]
+                genres_display = []
+                for item in genres_raw:
+                    if isinstance(item, int):
+                        genres_display.append(genres_map.get(item, f"Unknown_{item}"))
+                    elif isinstance(item, str):
+                        genres_display.append(item)
+                genres_str = ', '.join(genres_display) if genres_display else 'N/A'
+                
+                print(f"      [{i+1}] {name:<40} | {release_str} | {genres_str}")
             
         except Exception as e:
             print(f"Error sending to Elasticsearch: {e}")
@@ -312,11 +435,9 @@ def fetch_all_games_from_2020():
         print("Waiting 1 second...")
         time.sleep(1)
     
-    print("\n" + "="*80)
     print(f"IMPORT COMPLETED")
     print(f"Total games fetched: {total_games}")
     print(f"Total sent to ES: {total_sent}")
-    print("="*80 + "\n")
 
 if __name__ == "__main__":
     fetch_all_games_from_2020()

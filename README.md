@@ -1,5 +1,7 @@
 # GameStatsPx
 
+![Logo](./docs/img/logo.png)
+
 > A real-time game statistics processing platform with machine learning capabilities
 
 [![Docker](https://img.shields.io/badge/Docker-20.10%2B-blue.svg)](https://www.docker.com/)
@@ -9,6 +11,9 @@
 [![Elasticsearch](https://img.shields.io/badge/Elasticsearch-9.0.4-yellow.svg)](https://www.elastic.co/)
 
 GameStatsPx is a distributed real-time data processing platform designed to collect, process, and analyze game statistics using modern data engineering tools and machine learning techniques.
+
+![Screen1](./docs/img/screen1.png)
+![Screen2](./docs/img/screen2.png)
 
 ## Table of Contents
 
@@ -70,33 +75,9 @@ GameStatsPx is a distributed real-time data processing platform designed to coll
 │   Kibana    │ ──── Visualization
 └─────────────┘
 ```
-
-### Components
-
-| Component | Description | Port |
-|-----------|-------------|------|
-| **Games Crawler** | Data collection service | - |
-| **Fluent Bit** | Log aggregation and forwarding | 9090 |
-| **Apache Kafka** | Message broker (KRaft mode) | 9092 |
-| **Kafka UI** | Web-based Kafka monitoring | 8585 |
-| **Apache Spark** | ML processing engine | - |
-| **Elasticsearch** | Search and analytics engine | 9200 |
-| **Kibana** | Data visualization platform | 5601 |
-| **Python Init Script** | Dataset initialization | - |
-
 For a detailed architecture diagram, see [architecture](./docs/architecture.png).
 
 ## Prerequisites
-
-### System Requirements
-
-- **OS**: Linux, macOS, or Windows with WSL2
-- **CPU**: 4 cores minimum
-- **RAM**: 8GB minimum (16GB recommended)
-- **Disk**: 20GB free space
-- **Network**: Stable internet connection
-
-### Software Requirements
 
 - [Docker](https://www.docker.com/) 20.10+
 - [Docker Compose](https://docs.docker.com/compose/) 1.29+
@@ -112,7 +93,14 @@ git clone git@github.com:makapx/gameStatsPx.git
 cd gameStatsPx
 ```
 
-## ⚡ Quick Start
+### 2. Set your IGDB token and client ID
+```bash
+cd gamges-crawler
+mv config.example.json config.json
+```
+Set your credential into config.json file
+
+## Quick Start
 
 ### 1. Start All Services
 
@@ -196,7 +184,6 @@ gameStatsPx/
 │   ├── games.py                # Crawler
 ├── spark/                      # Apache Spark ML 
 │   ├── Dockerfile
-│   ├── data/
 ├── fluent-bit/                 # Log processing 
 │   └── fluent-bit.conf
 └── docs/                       # Documentation
@@ -351,8 +338,9 @@ curl -u elastic:changeme http://localhost:9200/_cluster/stats?pretty
 1. Navigate to http://localhost:5601
 2. Log in with credentials
 3. Go to **Management** → **Stack Management** → **Index Patterns**
-4. Create index patterns for your data
+4. Create index patterns for your data (`games`)
 5. Use **Discover** and **Dashboard** to visualize data
+5. Import `games_dashboard.ndjson` to `Kibana > Saved Objects` to see the dashboard I create
 
 ## Troubleshooting
 
@@ -379,12 +367,6 @@ docker-compose ps elasticsearch
 **Check health:**
 ```bash
 curl http://localhost:9200/_cluster/health
-```
-
-**Fix permissions:**
-```bash
-sudo chown -R 1000:1000 esdata
-docker-compose restart elasticsearch
 ```
 
 ### Kafka Connection Issues

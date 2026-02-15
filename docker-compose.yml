@@ -16,8 +16,6 @@ services:
     container_name: "gameStatsPx-spark"
     depends_on:
       - elasticsearch
-    volumes:
-      - ./spark/data/container_data:/dataset_output/
       
   fluentbit:
     image: fluent/fluent-bit:1.8

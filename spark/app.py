@@ -13,8 +13,11 @@ from pyspark.ml.classification import LogisticRegression
 from pyspark.ml import Pipeline, PipelineModel
 import time
 from datetime import datetime
+import requests
+from bs4 import BeautifulSoup
+import re
 
-sc = SparkContext(appName="PythonStructuredStreamsKafka")
+sc = SparkContext(appName="PythonStructuredStreamsKafka_v2_NoTwitter")
 spark = SparkSession(sc)
 print(spark.version)
 sc.setLogLevel("WARN")
@@ -22,7 +25,7 @@ sc.setLogLevel("WARN")
 kafkaServer = "kafka:39092"
 topic = "gameStatsPx"
 
-# Schema per i dati IGDB
+# Schema AGGIORNATO per i dati IGDB con campi tradotti
 game_schema = StructType([
     StructField("id", IntegerType(), True),
     StructField("name", StringType(), True),
@@ -39,11 +42,35 @@ game_schema = StructType([
     StructField("aggregated_rating", DoubleType(), True),
     StructField("aggregated_rating_count", IntegerType(), True),
     StructField("franchises", ArrayType(IntegerType()), True),
-    StructField("genres", ArrayType(IntegerType()), True),
-    StructField("platforms", ArrayType(IntegerType()), True)
+    
+    # CAMPI TRADOTTI
+    StructField("genres", ArrayType(StringType()), True),
+    StructField("platforms", ArrayType(StringType()), True),
+    StructField("game_modes", ArrayType(StringType()), True),
+    StructField("themes", ArrayType(StringType()), True),
+    StructField("player_perspectives", ArrayType(StringType()), True),
+    
+    # IDs originali
+    StructField("genre_ids", ArrayType(IntegerType()), True),
+    StructField("platform_ids", ArrayType(IntegerType()), True),
+    StructField("game_mode_ids", ArrayType(IntegerType()), True),
+    StructField("theme_ids", ArrayType(IntegerType()), True),
+    StructField("player_perspective_ids", ArrayType(IntegerType()), True),
+    
+    # Campi già calcolati dal crawler
+    StructField("days_since_release", IntegerType(), True),
+    StructField("days_to_release", IntegerType(), True),
+    StructField("is_released", BooleanType(), True),
+    StructField("is_upcoming", BooleanType(), True),
+    StructField("franchise_count", IntegerType(), True),
+    StructField("platform_count", IntegerType(), True),
+    StructField("genre_count", IntegerType(), True),
+    StructField("hype_score", DoubleType(), True),
+    StructField("longevity_score", DoubleType(), True),
+    StructField("success_level", IntegerType(), True),
 ])
 
-# Schema per dati da Elasticsearch (include campi calcolati)
+# Schema per dati da Elasticsearch
 es_schema = StructType([
     StructField("game_id", IntegerType(), True),
     StructField("name", StringType(), True),
@@ -64,12 +91,21 @@ es_schema = StructType([
     StructField("hype_score", DoubleType(), True),
     StructField("longevity_score", DoubleType(), True),
     StructField("success_level", IntegerType(), True),
+    StructField("genres", ArrayType(StringType()), True),
+    StructField("platforms", ArrayType(StringType()), True),
+    StructField("game_modes", ArrayType(StringType()), True),
+    StructField("themes", ArrayType(StringType()), True),
+    StructField("community_sentiment_score", DoubleType(), True),
 ])
 
-# Variabili globali per i modelli
+# Variabili globali
 GLOBAL_MODELS = {}
 MODELS_LAST_UPDATE = 0
-MODEL_UPDATE_INTERVAL = 3600  # Riallena ogni ora (3600 secondi)
+MODEL_UPDATE_INTERVAL = 3600
+
+# Cache per sentiment
+SENTIMENT_CACHE = {}
+SENTIMENT_CACHE_EXPIRY = 3600  # 1 ora
 
 def check_elasticsearch_connection():
     es = Elasticsearch(
@@ -81,11 +117,216 @@ def check_elasticsearch_connection():
     try:
         return es.ping()
     except Exception as e:
-        print(f"Errore durante il ping a Elasticsearch: {e}")
+        print(f"❌ Errore durante il ping a Elasticsearch: {e}")
         return False
 
+def fetch_reddit_sentiment(game_name):
+    """
+    Retrive data from Reddit
+    """
+    try:
+        # Search on r/gaming e r/Games. Use old since it's easier to parse
+        search_url = f"https://old.reddit.com/r/gaming/search.json?q={game_name.replace(' ', '+')}&restrict_sr=1&sort=relevance&t=month"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(search_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return None, None, None
+        
+        data = response.json()
+        posts = data.get('data', {}).get('children', [])
+        
+        if not posts:
+            return 0.0, "neutral", 0
+        
+        sentiment_scores = []
+        total_score = 0
+        
+        positive_keywords = ['amazing', 'great', 'awesome', 'love', 'excited', 'hyped', 
+                           'fantastic', 'incredible', 'best', 'perfect', 'masterpiece',
+                           'brilliant', 'stunning', 'epic']
+        
+        negative_keywords = ['bad', 'terrible', 'awful', 'hate', 'disappointed', 'boring',
+                            'worst', 'trash', 'garbage', 'disaster', 'failure',
+                            'broken', 'buggy', 'mess']
+        
+        for post in posts[:50]:
+            post_data = post.get('data', {})
+            title = post_data.get('title', '').lower()
+            score = post_data.get('score', 0)
+            
+            # Sentiment from keywords
+            pos_count = sum(1 for word in positive_keywords if word in title)
+            neg_count = sum(1 for word in negative_keywords if word in title)
+            
+            # Sentiment from Reddit score
+            if score > 100:
+                score_sentiment = 1.0
+            elif score > 50:
+                score_sentiment = 0.5
+            elif score > 10:
+                score_sentiment = 0.2
+            elif score < -10:
+                score_sentiment = -0.5
+            else:
+                score_sentiment = 0.0
+            
+            if pos_count > neg_count:
+                keyword_sentiment = min(1.0, (pos_count - neg_count) / 2.0)
+            elif neg_count > pos_count:
+                keyword_sentiment = max(-1.0, (pos_count - neg_count) / 2.0)
+            else:
+                keyword_sentiment = 0.0
+            
+            final_sentiment = keyword_sentiment * 0.6 + score_sentiment * 0.4
+            sentiment_scores.append(final_sentiment)
+            total_score += score
+        
+        if not sentiment_scores:
+            return 0.0, "neutral", 0
+        
+        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
+        sentiment_score = (avg_sentiment + 1.0) * 50.0 
+        
+        if sentiment_score >= 60:
+            sentiment_label = "positive"
+        elif sentiment_score >= 40:
+            sentiment_label = "neutral"
+        else:
+            sentiment_label = "negative"
+        
+        volume = len(posts)
+        
+        return sentiment_score, sentiment_label, volume
+        
+    except Exception as e:
+        print(f"Error on Reddit sentiment for {game_name}: {e}")
+        return None, None, None
+
+def fetch_metacritic_user_sentiment(game_name):
+    """
+    Fetch sentiment from user reviews Metacritic
+    """
+    try:
+        search_name = game_name.lower().replace(' ', '-').replace(':', '')
+        url = f"https://www.metacritic.com/game/{search_name}/"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            return None, None
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        user_score_elem = soup.find('div', {'class': 'c-siteReviewScore_user'})
+        
+        if user_score_elem:
+            score_text = user_score_elem.find('span')
+            if score_text:
+                try:
+                    user_score = float(score_text.text.strip())
+                    normalized_score = user_score * 10.0
+                    
+                    if normalized_score >= 75:
+                        label = "positive"
+                    elif normalized_score >= 50:
+                        label = "neutral"
+                    else:
+                        label = "negative"
+                    
+                    return normalized_score, label
+                except:
+                    pass
+        
+        return None, None
+        
+    except Exception as e:
+        print(f"Error in Metacritic sentiment for {game_name}: {e}")
+        return None, None
+
+def calculate_community_sentiment(game_name, hypes, follows, days_to_release):
+    """
+    Calculate and combine data for sentiment analysis
+    Use: Reddit, Metacritic, and native IGDB metrics
+    """
+    
+    # Skip released and not upcoming games
+    if days_to_release is None or days_to_release < 0 or days_to_release > 365:
+        return None, None, None, None
+    
+    # Check cache
+    cache_key = f"{game_name}_{days_to_release // 7}"
+    current_time = time.time()
+    
+    if cache_key in SENTIMENT_CACHE:
+        cached_data, cached_time = SENTIMENT_CACHE[cache_key]
+        if current_time - cached_time < SENTIMENT_CACHE_EXPIRY:
+            return (cached_data['sentiment_score'], cached_data['sentiment_label'], 
+                   cached_data['volume'], cached_data['source'])
+    
+    sentiment_scores = []
+    sources_used = []
+    total_volume = 0
+    
+    # 1. REDDIT SENTIMENT
+    reddit_score, reddit_label, reddit_volume = fetch_reddit_sentiment(game_name)
+    if reddit_score is not None:
+        sentiment_scores.append(('reddit', reddit_score, 0.4))  # Peso 40%
+        sources_used.append('reddit')
+        total_volume += reddit_volume or 0
+    
+    # 2. METACRITIC USER SENTIMENT  
+    meta_score, meta_label = fetch_metacritic_user_sentiment(game_name)
+    if meta_score is not None:
+        sentiment_scores.append(('metacritic', meta_score, 0.3))  # Peso 30%
+        sources_used.append('metacritic')
+    
+    # 3. IGDB NATIVE METRICS (hypes, follows)
+    if hypes is not None and follows is not None:
+        hype_factor = min(100.0, (hypes / 100.0) * 50.0)
+        follow_factor = min(100.0, (follows / 1000.0) * 50.0)
+        igdb_score = (hype_factor + follow_factor) / 2.0        
+        sentiment_scores.append(('igdb_metrics', igdb_score, 0.3))  # Peso 30%
+        sources_used.append('igdb')
+    
+    if not sentiment_scores:
+        return None, None, None, None
+    
+    weighted_sum = sum(score * weight for _, score, weight in sentiment_scores)
+    total_weight = sum(weight for _, _, weight in sentiment_scores)
+    final_score = weighted_sum / total_weight if total_weight > 0 else 50.0
+    
+    if final_score >= 60:
+        final_label = "positive"
+    elif final_score >= 40:
+        final_label = "neutral"
+    else:
+        final_label = "negative"
+    
+    sources_str = '+'.join(sources_used)
+    
+    SENTIMENT_CACHE[cache_key] = (
+        {
+            'sentiment_score': final_score,
+            'sentiment_label': final_label,
+            'volume': total_volume,
+            'source': sources_str
+        },
+        current_time
+    )
+    
+    return final_score, final_label, total_volume, sources_str
+
 def load_all_historical_data_from_elasticsearch():
-    """Carica TUTTI i record da Elasticsearch per training robusto"""
+    """Load data from Elasticsearch"""
     es = Elasticsearch(
         hosts=["http://elasticsearch:9200"],
         http_auth=("kibana_system_user", "kibanapass123"),
@@ -93,355 +334,315 @@ def load_all_historical_data_from_elasticsearch():
         retry_on_timeout=True
     )
     
-    print("Caricamento di TUTTI i dati storici da Elasticsearch...")
-    
+    print("Load Elasticsearch data...")
     try:
-        query = {
-            "query": {"match_all": {}},
-            "_source": True
-        }
+        if not es.indices.exists(index="games"):
+            print("Index 'games' not exists")
+            print("ML models will be trained when data will be available")
+            return None
         
+        query = {"query": {"match_all": {}}, "_source": True}
         all_docs = []
+        
         for doc in scan(es, index="games", query=query, scroll='5m', size=1000):
             all_docs.append(doc['_source'])
         
         if not all_docs:
-            print("Nessun dato storico trovato in Elasticsearch")
+            print("No data available")
             return None
         
-        print(f"Caricati {len(all_docs)} record da Elasticsearch")
-        
-        # Converti in DataFrame Spark
+        print(f"Loaded {len(all_docs)} record")
         historical_df = spark.createDataFrame(all_docs, schema=es_schema)
         
-        # Riempimento valori nulli
+        # Add fields if not exists
+        existing_columns = historical_df.columns
+        
+        if "community_sentiment_score" not in existing_columns:
+            historical_df = historical_df.withColumn("community_sentiment_score", lit(50.0))
+        
         historical_df = historical_df.fillna({
-            "hypes": 0,
-            "follows": 0,
-            "rating_count": 0,
-            "franchise_count": 0,
-            "platform_count": 0,
-            "genre_count": 0,
-            "total_rating": 0,
-            "aggregated_rating": 0,
-            "days_to_release": 0,
-            "days_since_release": 0,
-            "hype_score": 0,
-            "longevity_score": 0,
-            "success_level": 0
+            "hypes": 0, "follows": 0, "rating_count": 0,
+            "franchise_count": 0, "platform_count": 0, "genre_count": 0,
+            "total_rating": 0, "aggregated_rating": 0,
+            "days_to_release": 0, "days_since_release": 0,
+            "hype_score": 0, "longevity_score": 0, "success_level": 0,
+            "community_sentiment_score": 50.0
         })
         
         return historical_df
         
     except Exception as e:
-        print(f"Errore nel caricamento dati storici: {e}")
+        print(f"Error in loading Elasticsearch data: {e}")
         return None
 
-def calculate_hype_score(hypes, follows, rating_count, days_to_release):
-    """Calcola un punteggio di hype normalizzato"""
-    if days_to_release is None or days_to_release < 0:
+def calculate_genre_popularity_score(genres):
+    """Calculate score based on popular genres"""
+    if not genres:
         return 0.0
     
-    hype_component = (hypes or 0) * 2.0
-    follow_component = (follows or 0) * 1.5
-    anticipation_component = (rating_count or 0) * 0.5
+    popular_genres = {
+        'Action': 1.2, 'RPG': 1.15, 'Adventure': 1.1, 'Strategy': 1.0,
+        'Shooter': 1.1, 'Fighting': 0.9, 'Racing': 0.85, 'Sports': 0.9,
+        'Simulator': 0.8, 'Indie': 0.75, 'Puzzle': 0.7, 'Platform': 0.9
+    }
     
-    time_factor = max(0, 1 - (days_to_release / 365.0)) if days_to_release <= 365 else 0.3
-    
-    raw_score = (hype_component + follow_component + anticipation_component) * time_factor
-    
-    return min(100.0, raw_score / 10.0)
+    total_weight = sum(popular_genres.get(genre, 0.7) for genre in genres)
+    return min(100.0, (total_weight / len(genres)) * 50.0)
 
-def calculate_longevity_score(rating, rating_count, franchise_count, platform_count, days_since_release):
-    """Calcola un punteggio di longevità basato su metriche storiche"""
-    if days_since_release is None or days_since_release <= 0:
-        return None
+def calculate_platform_reach_score(platforms):
+    """Calculate platform score"""
+    if not platforms:
+        return 0.0
     
-    quality_factor = (rating or 0) / 10.0
-    popularity_factor = min(1.0, (rating_count or 0) / 1000.0)
-    franchise_factor = min(1.0, (franchise_count or 0) / 5.0)
-    platform_factor = min(1.0, (platform_count or 0) / 10.0)
+    platform_weights = {
+        'PC (Microsoft Windows)': 1.0, 'PlayStation 5': 1.2, 'Xbox Series X|S': 1.1,
+        'Nintendo Switch': 1.15, 'PlayStation 4': 0.9, 'Xbox One': 0.85,
+        'iOS': 0.7, 'Android': 0.7, 'Mac': 0.6, 'Linux': 0.5
+    }
     
-    age_years = days_since_release / 365.0
-    age_factor = min(1.0, age_years / 10.0) if age_years > 1 else 0.5
-    
-    raw_score = (quality_factor * 40 + popularity_factor * 30 + 
-                 franchise_factor * 15 + platform_factor * 10 + age_factor * 5)
-    
-    return round(raw_score, 2)
+    total_weight = sum(platform_weights.get(platform, 0.5) for platform in platforms)
+    return min(100.0, total_weight * 25.0)
 
-def classify_success_level(rating, rating_count):
-    """Classifica il livello di successo del gioco (0=flop, 1=medio, 2=hit)"""
-    if rating is None or rating_count is None:
-        return None
-    
-    if rating >= 80 and rating_count >= 500:
-        return 2  # Hit
-    elif rating >= 60 and rating_count >= 100:
-        return 1  # Medio
-    else:
-        return 0  # Flop
-
-hype_udf = udf(calculate_hype_score, DoubleType())
-longevity_udf = udf(calculate_longevity_score, DoubleType())
-success_udf = udf(classify_success_level, IntegerType())
+genre_popularity_udf = udf(calculate_genre_popularity_score, DoubleType())
+platform_reach_udf = udf(calculate_platform_reach_score, DoubleType())
 
 def train_all_models_with_historical_data(historical_df):
-    """Train tutti i modelli usando TUTTI i dati storici da Elasticsearch"""
+    """Training models"""
     
-    print("\n" + "="*80)
-    print("TRAINING MODELLI CON DATI STORICI COMPLETI")
-    print("="*80)
+    print("Training models - Sentiment Analysis")
     
     models = {}
     feature_cols = ["hypes", "follows", "rating_count", "franchise_count", 
                     "platform_count", "genre_count"]
+    
     feature_cols_extended = feature_cols + ["total_rating", "aggregated_rating"]
+
+    feature_cols_with_sentiment = feature_cols_extended + ["community_sentiment_score"]
     
     total_records = historical_df.count()
-    print(f"\n Dataset totale: {total_records} record")
+    print(f"\nDataset: {total_records} record")
     
-    # 1. MODELLO RATING (usando Gradient Boosted Trees per migliore accuracy)
+    # 1. RATING MODEL (GBT) - SENTIMENT
     training_rating = historical_df.filter(col("rating").isNotNull())
-    count_rating = training_rating.count()
-    print(f"\n Training Rating Model: {count_rating} record con rating")
     
-    if count_rating > 20:
+    count_rating = training_rating.count()
+    print(f"\n Rating Model (with sentiment): {count_rating} record")
+    
+    if count_rating > 50:
         try:
-            assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_rating", handleInvalid="skip")
-            
-            # Usa GBT invece di Linear Regression per migliore accuracy
-            gbt = GBTRegressor(
-                featuresCol="features_rating", 
-                labelCol="rating",
-                predictionCol="predicted_rating",
-                maxIter=30,
-                maxDepth=5,
-                stepSize=0.1
-            )
-            
+            assembler = VectorAssembler(inputCols=feature_cols_with_sentiment, 
+                                       outputCol="features_rating", handleInvalid="skip")
+            gbt = GBTRegressor(featuresCol="features_rating", labelCol="rating",
+                              predictionCol="predicted_rating", maxIter=50, maxDepth=6)
             pipeline = Pipeline(stages=[assembler, gbt])
             models['rating'] = pipeline.fit(training_rating)
-            print(f"Rating model trained successfully (GBT)")
+            print(f"Trained successfully (including sentiment feature)")
         except Exception as e:
-            print(f"Errore: {e}")
-    else:
-        print(f"Dati insufficienti (minimo 20)")
+            print(f"Error: {e}")
     
-    # 2. MODELLO RATING COUNT
-    training_count = historical_df.filter((col("rating_count").isNotNull()) & (col("rating_count") > 0))
+    # 2. ALTERNATIVE RATING MODEL (NO SENTIMENT) - fallback
+    print(f"\n Rating Model (no sentiment - fallback): {count_rating} record")
+
+    if count_rating > 50:
+        try:
+            assembler = VectorAssembler(inputCols=feature_cols_extended, 
+                                       outputCol="features_rating_base", handleInvalid="skip")
+            gbt = GBTRegressor(featuresCol="features_rating_base", labelCol="rating",
+                              predictionCol="predicted_rating_base", maxIter=50, maxDepth=6)
+            pipeline = Pipeline(stages=[assembler, gbt])
+            models['rating_base'] = pipeline.fit(training_rating)
+            print(f"Trained successfully (base model)")
+        except Exception as e:
+            print(f"Error: {e}")
+    
+    # 2. RATING COUNT MODEL
+    training_count = historical_df.filter((col("rating_count").isNotNull()) & 
+                                         (col("rating_count") > 0))
     count_rating_count = training_count.count()
-    print(f"\n Training Rating Count Model: {count_rating_count} record")
+    print(f"\nRating Count Model: {count_rating_count} record")
     
-    if count_rating_count > 20:
+    if count_rating_count > 30:
         try:
-            assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_count", handleInvalid="skip")
-            lr = LinearRegression(featuresCol="features_count", labelCol="rating_count",
-                                 predictionCol="predicted_rating_count", maxIter=20)
-            pipeline = Pipeline(stages=[assembler, lr])
+            assembler = VectorAssembler(inputCols=feature_cols, 
+                                       outputCol="features_count", handleInvalid="skip")
+            rf = RandomForestRegressor(featuresCol="features_count", labelCol="rating_count",
+                                      predictionCol="predicted_rating_count", numTrees=30)
+            pipeline = Pipeline(stages=[assembler, rf])
             models['rating_count'] = pipeline.fit(training_count)
-            print(f"Rating Count model trained successfully")
+            print(f"Trained successfully")
         except Exception as e:
-            print(f"Errore: {e}")
-    else:
-        print(f"Dati insufficienti (minimo 20)")
+            print(f"Error: {e}")
     
-    # 3. MODELLO HYPE GROWTH
-    training_hype = historical_df.filter((col("hypes").isNotNull()) & (col("hypes") > 0))
-    count_hype = training_hype.count()
-    print(f"\n Training Hype Growth Model: {count_hype} record")
-    
-    if count_hype > 20:
-        try:
-            assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_hype", handleInvalid="skip")
-            lr = LinearRegression(featuresCol="features_hype", labelCol="hypes",
-                                 predictionCol="predicted_hype_growth", maxIter=20)
-            pipeline = Pipeline(stages=[assembler, lr])
-            models['hype'] = pipeline.fit(training_hype)
-            print(f"Hype Growth model trained successfully")
-        except Exception as e:
-            print(f"Errore: {e}")
-    else:
-        print(f"Dati insufficienti (minimo 20)")
-    
-    # 4. MODELLO FOLLOWS GROWTH
-    training_follows = historical_df.filter((col("follows").isNotNull()) & (col("follows") > 0))
-    count_follows = training_follows.count()
-    print(f"\n Training Follows Growth Model: {count_follows} record")
-    
-    if count_follows > 20:
-        try:
-            assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_follows", handleInvalid="skip")
-            lr = LinearRegression(featuresCol="features_follows", labelCol="follows",
-                                 predictionCol="predicted_follows_growth", maxIter=20)
-            pipeline = Pipeline(stages=[assembler, lr])
-            models['follows'] = pipeline.fit(training_follows)
-            print(f"Follows Growth model trained successfully")
-        except Exception as e:
-            print(f"Errore: {e}")
-    else:
-        print(f"Dati insufficienti (minimo 20)")
-    
-    # 5. MODELLO LONGEVITY (Random Forest per relazioni complesse)
+    # 3. LONGEVITY MODEL
     training_longevity = historical_df.filter(col("longevity_score").isNotNull())
     count_longevity = training_longevity.count()
-    print(f"\n Training Longevity Model: {count_longevity} record")
+    print(f"\nLongevity Model: {count_longevity} record")
     
-    if count_longevity > 20:
+    if count_longevity > 30:
         try:
-            assembler = VectorAssembler(inputCols=feature_cols_extended, outputCol="features_longevity", handleInvalid="skip")
-            rf = RandomForestRegressor(featuresCol="features_longevity", labelCol="longevity_score",
-                                      predictionCol="predicted_longevity", numTrees=30, maxDepth=5)
+            assembler = VectorAssembler(inputCols=feature_cols_extended, 
+                                       outputCol="features_longevity", handleInvalid="skip")
+            rf = RandomForestRegressor(featuresCol="features_longevity", 
+                                      labelCol="longevity_score",
+                                      predictionCol="predicted_longevity", numTrees=40)
             pipeline = Pipeline(stages=[assembler, rf])
             models['longevity'] = pipeline.fit(training_longevity)
-            print(f"Longevity model trained successfully (Random Forest)")
+            print(f"Trained successfully")
         except Exception as e:
-            print(f"Errore: {e}")
-    else:
-        print(f"Dati insufficienti (minimo 20)")
+            print(f"Error: {e}")
     
-    # 6. CLASSIFICATORE SUCCESSO
+    # 4. SUCCESS CLASSIFIER
     training_success = historical_df.filter(col("success_level").isNotNull())
     count_success = training_success.count()
-    print(f"\n Training Success Classifier: {count_success} record")
+    print(f"\nSuccess Classifier: {count_success} record")
     
-    if count_success > 30:
+    if count_success > 50:
         try:
-            assembler = VectorAssembler(inputCols=feature_cols, outputCol="features_success", handleInvalid="skip")
-            lr_classifier = LogisticRegression(featuresCol="features_success", labelCol="success_level",
-                                              predictionCol="predicted_success_class",
-                                              probabilityCol="success_probability", maxIter=20)
-            pipeline = Pipeline(stages=[assembler, lr_classifier])
+            assembler = VectorAssembler(inputCols=feature_cols_extended, 
+                                       outputCol="features_success", handleInvalid="skip")
+            lr = LogisticRegression(featuresCol="features_success", labelCol="success_level",
+                                   predictionCol="predicted_success_class", maxIter=30)
+            pipeline = Pipeline(stages=[assembler, lr])
             models['success'] = pipeline.fit(training_success)
-            print(f"Success Classifier trained successfully")
+            print(f"Trained successfully")
         except Exception as e:
-            print(f"Errore: {e}")
-    else:
-        print(f"Dati insufficienti (minimo 30)")
+            print(f"Error: {e}")
     
-    print("\n" + "="*80)
-    print(f"Training completato: {len(models)}/6 modelli trainati con successo")
-    print("="*80 + "\n")
+    print(f"Training completed: {len(models)}/4 ML models")
     
     return models
 
 def update_global_models_if_needed():
-    """Aggiorna i modelli globali se è passato abbastanza tempo"""
+    """ML models update"""
     global GLOBAL_MODELS, MODELS_LAST_UPDATE
     
     current_time = time.time()
     
-    # Riallena solo se non ci sono modelli O è passata almeno un'ora
     if not GLOBAL_MODELS or (current_time - MODELS_LAST_UPDATE) > MODEL_UPDATE_INTERVAL:
-        print(f"\n Aggiornamento modelli globali (ultimo update: {int((current_time - MODELS_LAST_UPDATE) / 60)} minuti fa)")
+        print(f"\n Update models...")
         
-        # Carica TUTTI i dati storici
         historical_df = load_all_historical_data_from_elasticsearch()
         
-        if historical_df and historical_df.count() > 50:
-            # Train tutti i modelli
+        if historical_df and historical_df.count() > 100:
             GLOBAL_MODELS = train_all_models_with_historical_data(historical_df)
             MODELS_LAST_UPDATE = current_time
-            print(f"Modelli aggiornati con {historical_df.count()} record storici totali\n")
+            print(f"ML models updated successfully\n")
         else:
-            print("Dati storici insufficienti, mantengo modelli esistenti\n")
+            if not historical_df:
+                print("'games' index empty or not exists")
+                print("ML models will be trained when data will be available")
+            else:
+                print(f"Only {historical_df.count()} record availabled - required at least 100")
+            print("Continue ML prediction...\n")
 
 def enrich_with_predictions(df: DataFrame) -> DataFrame:
-    """Arricchisce il DataFrame con predizioni usando modelli globali"""
+    """Enrich DataFrame with ML e sentiment"""
     
-    # Aggiorna modelli se necessario
     update_global_models_if_needed()
     
-    # Parsing del JSON da Kafka
+    # Parsing JSON from Kafka
     parsed_df = df.select(
         col("timestamp"),
         from_json(col("value"), game_schema).alias("game")
     ).where(col("game").isNotNull()).select("timestamp", "game.*")
     
-    # Conversione timestamp Unix a date
-    enriched_df = parsed_df \
-        .withColumn("release_date_formatted", 
-                    to_date((col("first_release_date") / 1000).cast("timestamp"))) \
-        .withColumn("current_date", current_date()) \
-        .withColumn("days_to_release", 
-                    datediff(col("release_date_formatted"), col("current_date"))) \
-        .withColumn("days_since_release", 
-                    datediff(col("current_date"), col("release_date_formatted"))) \
-        .withColumn("is_released", 
-                    when(col("days_since_release") >= 0, lit(True)).otherwise(lit(False))) \
-        .withColumn("is_upcoming", 
-                    when(col("days_to_release") >= 0, lit(True)).otherwise(lit(False)))
+    enriched_df = parsed_df
     
-    # Calcolo metriche personalizzate
     enriched_df = enriched_df \
-        .withColumn("franchise_count", 
-                    when(col("franchises").isNotNull(), size(col("franchises")))
-                    .otherwise(lit(0))) \
-        .withColumn("platform_count", 
-                    when(col("platforms").isNotNull(), size(col("platforms")))
-                    .otherwise(lit(0))) \
-        .withColumn("genre_count", 
-                    when(col("genres").isNotNull(), size(col("genres")))
-                    .otherwise(lit(0)))
+        .withColumn("genre_popularity_score", genre_popularity_udf(col("genres"))) \
+        .withColumn("platform_reach_score", platform_reach_udf(col("platforms")))
     
-    # Calcolo hype score
-    enriched_df = enriched_df \
-        .withColumn("hype_score", 
-                    when(col("is_upcoming"), 
-                         hype_udf(col("hypes"), col("follows"), 
-                                 col("rating_count"), col("days_to_release")))
-                    .otherwise(lit(None)))
-    
-    # Calcolo longevity score
-    enriched_df = enriched_df \
-        .withColumn("longevity_score", 
-                    when(col("is_released"), 
-                         longevity_udf(col("rating"), col("rating_count"), 
-                                      col("franchise_count"), col("platform_count"), 
-                                      col("days_since_release")))
-                    .otherwise(lit(None)))
-    
-    # Classificazione successo
-    enriched_df = enriched_df \
-        .withColumn("success_level",
-                    success_udf(col("rating"), col("rating_count")))
-    
-    # Riempimento valori nulli
     enriched_df = enriched_df.fillna({
-        "hypes": 0,
-        "follows": 0,
-        "rating_count": 0,
-        "franchise_count": 0,
-        "platform_count": 0,
-        "genre_count": 0,
-        "total_rating": 0,
-        "aggregated_rating": 0
+        "hypes": 0, "follows": 0, "rating_count": 0,
+        "franchise_count": 0, "platform_count": 0, "genre_count": 0,
+        "total_rating": 0, "aggregated_rating": 0
     })
     
-    # Applica predizioni usando i modelli globali trainati su TUTTI i dati
+    # COMMUNITY SENTIMENT (Reddit + Metacritic + IGDB)
+    print(f"\n Calculating community sentiment...")
+    records = enriched_df.collect()
+    
+    if not records:
+        print(f"Empty batch, skipping sentiment analysis")
+        return enriched_df.withColumn("community_sentiment_score", lit(50.0)) \
+                          .withColumn("community_sentiment_label", lit("neutral")) \
+                          .withColumn("community_data_volume", lit(None)) \
+                          .withColumn("sentiment_source", lit(None)) \
+                          .withColumn("predicted_rating", lit(None)) \
+                          .withColumn("predicted_rating_count", lit(None)) \
+                          .withColumn("predicted_longevity", lit(None)) \
+                          .withColumn("predicted_success_class", lit(None)) \
+                          .withColumn("predicted_success_score", lit(None)) \
+                          .withColumn("prediction_confidence", lit(None)) \
+                          .withColumn("processed_timestamp", lit(int(time.time())))
+    
+    sentiment_data = []
+    
+    for record in records:
+        game_name = record['name']
+        days_to_release = record['days_to_release']
+        is_upcoming = record['is_upcoming']
+        hypes = record['hypes']
+        follows = record['follows']
+        
+        if is_upcoming and days_to_release and 0 < days_to_release <= 365:
+            sentiment_score, sentiment_label, volume, source = calculate_community_sentiment(
+                game_name, hypes, follows, days_to_release
+            )
+            sentiment_data.append({
+                'id': record['id'],
+                'community_sentiment_score': sentiment_score if sentiment_score else 50.0,  # Default neutro
+                'community_sentiment_label': sentiment_label,
+                'community_data_volume': volume,
+                'sentiment_source': source
+            })
+        else:
+            # Neutral score for existing games
+            sentiment_data.append({
+                'id': record['id'],
+                'community_sentiment_score': 50.0,  # Neutro
+                'community_sentiment_label': "neutral",
+                'community_data_volume': None,
+                'sentiment_source': None
+            })
+    
+    # Join sentiment before ML
+    from pyspark.sql.types import StructType, StructField, IntegerType, DoubleType, StringType
+    
+    # Schema
+    sentiment_schema = StructType([
+        StructField("id", IntegerType(), False),
+        StructField("community_sentiment_score", DoubleType(), True),
+        StructField("community_sentiment_label", StringType(), True),
+        StructField("community_data_volume", IntegerType(), True),
+        StructField("sentiment_source", StringType(), True)
+    ])
+    
+    sentiment_df = spark.createDataFrame(sentiment_data, schema=sentiment_schema)
+    enriched_df = enriched_df.join(sentiment_df, on='id', how='left')
+    
+    print(f"Applying ML predictions (sentiment-aware)...")
+    
     if 'rating' in GLOBAL_MODELS:
         enriched_df = GLOBAL_MODELS['rating'].transform(enriched_df)
         enriched_df = enriched_df.drop("features_rating")
+        print(f"Rating prediction (with sentiment)")
     else:
         enriched_df = enriched_df.withColumn("predicted_rating", lit(None))
+        print(f"Rating model not available")
+    
+    # Fallback: no sentiment-aware
+    if 'rating_base' in GLOBAL_MODELS and 'predicted_rating' not in enriched_df.columns:
+        enriched_df = GLOBAL_MODELS['rating_base'].transform(enriched_df)
+        enriched_df = enriched_df.withColumnRenamed("predicted_rating_base", "predicted_rating")
+        enriched_df = enriched_df.drop("features_rating_base")
+        print(f"   ✅ Rating prediction (base model fallback)")
     
     if 'rating_count' in GLOBAL_MODELS:
         enriched_df = GLOBAL_MODELS['rating_count'].transform(enriched_df)
         enriched_df = enriched_df.drop("features_count")
     else:
         enriched_df = enriched_df.withColumn("predicted_rating_count", lit(None))
-    
-    if 'hype' in GLOBAL_MODELS:
-        enriched_df = GLOBAL_MODELS['hype'].transform(enriched_df)
-        enriched_df = enriched_df.drop("features_hype")
-    else:
-        enriched_df = enriched_df.withColumn("predicted_hype_growth", lit(None))
-    
-    if 'follows' in GLOBAL_MODELS:
-        enriched_df = GLOBAL_MODELS['follows'].transform(enriched_df)
-        enriched_df = enriched_df.drop("features_follows")
-    else:
-        enriched_df = enriched_df.withColumn("predicted_follows_growth", lit(None))
     
     if 'longevity' in GLOBAL_MODELS:
         enriched_df = GLOBAL_MODELS['longevity'].transform(enriched_df)
@@ -454,7 +655,10 @@ def enrich_with_predictions(df: DataFrame) -> DataFrame:
         enriched_df = enriched_df.drop("features_success")
     else:
         enriched_df = enriched_df.withColumn("predicted_success_class", lit(None))
-        enriched_df = enriched_df.withColumn("success_probability", lit(None))
+    
+    # predicted_rating NOW ALREADY INCLUDES SENTIMENT as an ML feature
+    # Sentiment_adjusted_rating no longer needs to be calculated separately.
+    # GBT model has learned to weight sentiment automatically.
     
     # Success score
     enriched_df = enriched_df \
@@ -463,15 +667,23 @@ def enrich_with_predictions(df: DataFrame) -> DataFrame:
                          col("predicted_success_class") * 50.0)
                     .otherwise(lit(None)))
     
-    # Confidence score
+    # Enriched confidence
     enriched_df = enriched_df \
-        .withColumn("prediction_confidence", 
+        .withColumn("base_confidence",
                    ((col("hypes") > 0).cast("int") + 
                     (col("follows") > 0).cast("int") + 
                     (col("rating_count") > 0).cast("int") + 
                     (col("franchise_count") > 0).cast("int") +
                     (col("platform_count") > 0).cast("int") +
-                    (col("genre_count") > 0).cast("int")) / 6.0 * 100)
+                    (col("genre_count") > 0).cast("int")) / 6.0) \
+        .withColumn("sentiment_boost",
+                    when(col("community_data_volume") >= 50, lit(0.15))
+                    .when(col("community_data_volume") >= 20, lit(0.10))
+                    .when(col("community_data_volume") >= 5, lit(0.05))
+                    .otherwise(lit(0.0))) \
+        .withColumn("prediction_confidence",
+                    (col("base_confidence") + col("sentiment_boost")) * 100) \
+        .drop("base_confidence", "sentiment_boost")
     
     enriched_df = enriched_df.withColumn("processed_timestamp", lit(int(time.time())))
     
@@ -486,12 +698,11 @@ def send_to_elasticsearch(batch_df: DataFrame, batch_id: int):
     )
 
     if not es.ping():
-        raise ValueError("Error into Elasticsearch connection")
+        raise ValueError("Elasticsearch connection error")
 
-    # Arricchimento con predizioni
-    enriched_df = enrich_with_predictions(batch_df)
+    print(f"Processing Batch #{batch_id}")
     
-    # Conversione in JSON
+    enriched_df = enrich_with_predictions(batch_df)
     records = enriched_df.toJSON().map(json.loads).collect()
 
     for record in records:
@@ -515,50 +726,68 @@ def send_to_elasticsearch(batch_df: DataFrame, batch_id: int):
             "platform_count": record.get("platform_count"),
             "genre_count": record.get("genre_count"),
             
-            # Metriche calcolate
+            # Human readable fields
+            "genres": record.get("genres", []),
+            "platforms": record.get("platforms", []),
+            "game_modes": record.get("game_modes", []),
+            "themes": record.get("themes", []),
+            "player_perspectives": record.get("player_perspectives", []),
+            
+            "genre_popularity_score": record.get("genre_popularity_score"),
+            "platform_reach_score": record.get("platform_reach_score"),
             "hype_score": record.get("hype_score"),
             "longevity_score": record.get("longevity_score"),
             "success_level": record.get("success_level"),
             
-            # PREDIZIONI ML
+            # COMMUNITY SENTIMENT
+            "community_sentiment_score": record.get("community_sentiment_score"),
+            "community_sentiment_label": record.get("community_sentiment_label"),
+            "community_data_volume": record.get("community_data_volume"),
+            "sentiment_source": record.get("sentiment_source"),
+            
+            # ML Predictions
             "predicted_rating": record.get("predicted_rating"),
             "predicted_rating_count": record.get("predicted_rating_count"),
-            "predicted_hype_growth": record.get("predicted_hype_growth"),
-            "predicted_follows_growth": record.get("predicted_follows_growth"),
             "predicted_longevity": record.get("predicted_longevity"),
             "predicted_success_class": record.get("predicted_success_class"),
             "predicted_success_score": record.get("predicted_success_score"),
             "prediction_confidence": record.get("prediction_confidence"),
             
-            # Metadati
+            # Metadata
             "batch_id": batch_id,
             "processed_timestamp": record.get("processed_timestamp"),
             "ingestion_time": datetime.utcnow().isoformat()
         }
         
-        update_body = {
-            "doc": document,
-            "doc_as_upsert": True
-        }
+        update_body = {"doc": document, "doc_as_upsert": True}
 
-        print(f"{record.get('name', 'Unknown')[:30]:<30} | "
-              f"Hype: {document.get('hype_score', 0):>5.1f} | "
-              f"Long: {document.get('longevity_score', 0):>5.1f} | "
-              f"P.Rating: {document.get('predicted_rating', 0):>5.1f} | "
-              f"Success: {document.get('predicted_success_score', 0):>5.1f}")
+        sentiment_str = ""
+        if document.get('community_sentiment_score') and document.get('community_sentiment_score') != 50.0:
+            source = document.get('sentiment_source', 'N/A')
+            sentiment_str = f"| Sentiment: {document['community_sentiment_label'][:3].upper()} {document['community_sentiment_score']:.0f} ({source})"
+        
+        print(f"{'🎮' if record.get('is_upcoming') else '✅'} "
+              f"{record.get('name', 'Unknown')[:35]:<35} | "
+              f"P.Rating: {document.get('predicted_rating', 0):>5.1f} (sentiment-aware) "
+              f"{sentiment_str}")
         
         es.update(index="games", id=doc_id, body=update_body)
 
+# Main
+print("SPARK STREAMING")
+print("Sentiment from: Reddit + Metacritic + IGDB native metrics")
 
 while not check_elasticsearch_connection():
     print("Connessione a Elasticsearch...")
     time.sleep(3)
 
-print("Connessione a ElasticSearch stabilita")
-
-# Carica modelli iniziali con TUTTI i dati storici
-print("\n Inizializzazione modelli ML con dati storici...")
+print("Elasticsearch connected\n")
+print("Init ML models...")
 update_global_models_if_needed()
+
+print("\nStarting Kafka streaming...")
+print(f"Topic: {topic}")
+print(f"Server: {kafkaServer}\n")
 
 df = spark \
     .readStream \

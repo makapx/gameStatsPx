@@ -7651,17 +7651,22 @@ main {
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h4 id="NLP-and-Sentiment-analysis">NLP and Sentiment analysis<a class="anchor-link" href="#NLP-and-Sentiment-analysis">¶</a></h4><p>Upcoming videogames will be enriched with community scores based on sentiment analysis.
+Web scraping from public sub-reddit such as <code>r/Games</code> and from Metacritic website, provides information about community sentiment, used in predicion.</p>
+</div>
+</div>
+</div>
+</div></section><section>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="Spark-Configuration">Spark Configuration<a class="anchor-link" href="#Spark-Configuration">¶</a></h3><h4 id="Container-Details">Container Details<a class="anchor-link" href="#Container-Details">¶</a></h4><ul>
 <li><strong>Name</strong>: <code>gameStatsPx-spark</code></li>
 <li><strong>Base Image</strong>: Custom Spark build</li>
 <li><strong>Dependencies</strong>: Elasticsearch connector</li>
-</ul>
-<h4 id="Volume-Mapping">Volume Mapping<a class="anchor-link" href="#Volume-Mapping">¶</a></h4><pre><code>./spark/data/container_data ──&gt; /dataset_output/
-</code></pre>
-<ul>
-<li>Persists processed datasets</li>
-<li>Enables batch exports</li>
-<li>Facilitates model evaluation</li>
 </ul>
 <h4 id="Processing-Flow">Processing Flow<a class="anchor-link" href="#Processing-Flow">¶</a></h4><ol>
 <li>Read streaming data from Kafka</li>
@@ -7707,18 +7712,6 @@ main {
 <li><strong>Port</strong>: 5601</li>
 <li><strong>License</strong>: Basic (self-generated)</li>
 </ul>
-<h4 id="Enabled-Modules">Enabled Modules<a class="anchor-link" href="#Enabled-Modules">¶</a></h4><ul>
-<li>✅ Core visualizations</li>
-<li>✅ Discover &amp; search</li>
-<li>✅ Dashboard creation</li>
-</ul>
-<h4 id="Disabled-Modules">Disabled Modules<a class="anchor-link" href="#Disabled-Modules">¶</a></h4><ul>
-<li>❌ Graph</li>
-<li>❌ Machine Learning (separate from Spark)</li>
-<li>❌ Reporting</li>
-<li>❌ Watcher</li>
-<li>❌ Maps</li>
-</ul>
 </div>
 </div>
 </div>
@@ -7739,13 +7732,6 @@ main {
 <li><strong>Independent</strong>: Runs separately from Docker containers</li>
 <li><strong>One-time</strong>: Executes during system setup</li>
 </ul>
-<h4 id="Typical-Operations">Typical Operations<a class="anchor-link" href="#Typical-Operations">¶</a></h4><div class="highlight"><pre><span></span><span class="c1"># Connect to Elasticsearch</span>
-<span class="n">es</span> <span class="o">=</span> <span class="n">Elasticsearch</span><span class="p">([</span><span class="s1">'http://localhost:9200'</span><span class="p">])</span>
-
-<span class="c1"># Create indices</span>
-<span class="c1"># Bulk insert initial data</span>
-<span class="c1"># Configure index settings</span>
-</pre></div>
 </div>
 </div>
 </div>
@@ -7911,7 +7897,6 @@ main {
 <h3 id="Machine-Learning">Machine Learning<a class="anchor-link" href="#Machine-Learning">¶</a></h3><ul>
 <li><strong>Multiple models</strong>: Linear &amp; non-linear regression</li>
 <li><strong>Real-time predictions</strong>: Streaming ML inference</li>
-<li><strong>Model persistence</strong>: Save/load trained models</li>
 </ul>
 <h3 id="Observability">Observability<a class="anchor-link" href="#Observability">¶</a></h3><ul>
 <li><strong>Kafka UI</strong>: Monitor topics and consumer groups</li>
@@ -7920,7 +7905,6 @@ main {
 </ul>
 <h3 id="Data-Persistence">Data Persistence<a class="anchor-link" href="#Data-Persistence">¶</a></h3><ul>
 <li><strong>Volume mapping</strong>: Elasticsearch data persistence</li>
-<li><strong>Spark output</strong>: Local dataset exports</li>
 <li><strong>Fluent Bit config</strong>: External configuration</li>
 </ul>
 </div>
@@ -7933,13 +7917,7 @@ main {
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="8.-Technical-Specifications">8. Technical Specifications<a class="anchor-link" href="#8.-Technical-Specifications">¶</a></h2><h3 id="System-Requirements">System Requirements<a class="anchor-link" href="#System-Requirements">¶</a></h3><h4 id="Minimum-Hardware">Minimum Hardware<a class="anchor-link" href="#Minimum-Hardware">¶</a></h4><ul>
-<li><strong>CPU</strong>: 4 cores</li>
-<li><strong>RAM</strong>: 8GB (16GB recommended)</li>
-<li><strong>Disk</strong>: 20GB free space</li>
-<li><strong>Network</strong>: 100Mbps bandwidth</li>
-</ul>
-<h4 id="Software-Prerequisites">Software Prerequisites<a class="anchor-link" href="#Software-Prerequisites">¶</a></h4><ul>
+<h2 id="8.-Technical-Specifications">8. Technical Specifications<a class="anchor-link" href="#8.-Technical-Specifications">¶</a></h2><ul>
 <li>Docker Engine 20.10+</li>
 <li>Docker Compose 1.29+</li>
 <li>Python 3.8+ (for init script)</li>
@@ -8017,7 +7995,6 @@ main {
 <li><strong>Spark</strong>: Configurable (default cluster mode)</li>
 </ul>
 <h4 id="Storage-Volumes">Storage Volumes<a class="anchor-link" href="#Storage-Volumes">¶</a></h4><pre><code>./esdata ──&gt; Elasticsearch data
-./spark/data/container_data ──&gt; Spark outputs
 ./fluent-bit/fluent-bit.conf ──&gt; Fluent Bit config
 </code></pre>
 <h4 id="Network-Bandwidth">Network Bandwidth<a class="anchor-link" href="#Network-Bandwidth">¶</a></h4><ul>
@@ -8093,14 +8070,6 @@ docker-compose<span class="w"> </span>logs<span class="w"> </span>-f<span class=
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="Data-Flow-Summary">Data Flow Summary<a class="anchor-link" href="#Data-Flow-Summary">¶</a></h3><pre><code>┌──────────────────────────────────────────────────┐
-│  Collection  │  Processing  │  ML  │  Storage   │
-├──────────────┼──────────────┼──────┼────────────┤
-│   Crawler    │  Fluent Bit  │Spark │Elasticsearch│
-│      ↓       │      ↓       │  ↓   │     ↓      │
-│   Raw Data   │    Kafka     │Model │  Kibana    │
-└──────────────────────────────────────────────────┘
-</code></pre>
 <h3 id="Key-Advantages">Key Advantages<a class="anchor-link" href="#Key-Advantages">¶</a></h3><ol>
 <li><strong>Decoupled Architecture</strong>: Services can be updated independently</li>
 <li><strong>Real-Time Analytics</strong>: Immediate insights from streaming data</li>
@@ -8129,12 +8098,6 @@ docker-compose<span class="w"> </span>logs<span class="w"> </span>-f<span class=
 <li>Real-time alerting system</li>
 <li>API gateway (Kong/Nginx)</li>
 <li>Grafana for metrics</li>
-</ul>
-<h4 id="Security-Enhancements">Security Enhancements<a class="anchor-link" href="#Security-Enhancements">¶</a></h4><ul>
-<li>SSL/TLS encryption</li>
-<li>OAuth2 authentication</li>
-<li>Secrets management (Vault)</li>
-<li>Network policies</li>
 </ul>
 </div>
 </div>
@@ -8182,60 +8145,6 @@ docker-compose<span class="w"> </span>logs<span class="w"> </span>-f<span class=
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <h3 id="Meme">Meme<a class="anchor-link" href="#Meme">¶</a></h3><p><em>Me at the end of this project.</em></p>
 <img alt="No description has been provided for this image" src="img/meme.png" width="500"/>
-</div>
-</div>
-</div>
-</div></section></section><section><section>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="Appendix:-Commands-Reference">Appendix: Commands Reference<a class="anchor-link" href="#Appendix:-Commands-Reference">¶</a></h2><h3 id="Common-Operations">Common Operations<a class="anchor-link" href="#Common-Operations">¶</a></h3><div class="highlight"><pre><span></span><span class="c1"># Start all services</span>
-docker-compose<span class="w"> </span>up<span class="w"> </span>-d
-
-<span class="c1"># Stop all services</span>
-docker-compose<span class="w"> </span>down
-
-<span class="c1"># View logs</span>
-docker-compose<span class="w"> </span>logs<span class="w"> </span>-f<span class="w"> </span><span class="o">[</span>service-name<span class="o">]</span>
-
-<span class="c1"># Restart a service</span>
-docker-compose<span class="w"> </span>restart<span class="w"> </span><span class="o">[</span>service-name<span class="o">]</span>
-
-<span class="c1"># Rebuild containers</span>
-docker-compose<span class="w"> </span>build
-
-<span class="c1"># Remove volumes</span>
-docker-compose<span class="w"> </span>down<span class="w"> </span>-v
-</pre></div>
-</div>
-</div>
-</div>
-</div></section><section>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell">
-<div class="jp-Cell-inputWrapper" tabindex="0">
-<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
-</div>
-<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
-</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h3 id="Elasticsearch-Queries">Elasticsearch Queries<a class="anchor-link" href="#Elasticsearch-Queries">¶</a></h3><div class="highlight"><pre><span></span><span class="c1"># Check cluster health</span>
-curl<span class="w"> </span>-u<span class="w"> </span>elastic:changeme<span class="w"> </span>http://localhost:9200/_cluster/health
-
-<span class="c1"># List indices</span>
-curl<span class="w"> </span>-u<span class="w"> </span>elastic:changeme<span class="w"> </span>http://localhost:9200/_cat/indices
-
-<span class="c1"># Search all documents</span>
-curl<span class="w"> </span>-u<span class="w"> </span>elastic:changeme<span class="w"> </span>http://localhost:9200/game-stats/_search
-</pre></div>
-<h3 id="Kafka-Operations">Kafka Operations<a class="anchor-link" href="#Kafka-Operations">¶</a></h3><div class="highlight"><pre><span></span><span class="c1"># List topics (from inside container)</span>
-docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>kafka<span class="w"> </span>kafka-topics<span class="w"> </span>--list<span class="w"> </span>--bootstrap-server<span class="w"> </span>localhost:39092
-
-<span class="c1"># Describe topic</span>
-docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>kafka<span class="w"> </span>kafka-topics<span class="w"> </span>--describe<span class="w"> </span>--topic<span class="w"> </span>gameStatsPx<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--bootstrap-server<span class="w"> </span>localhost:39092
-</pre></div>
 </div>
 </div>
 </div>
