@@ -7624,20 +7624,16 @@ main {
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="4.-Machine-Learning-Layer">4. Machine Learning Layer<a class="anchor-link" href="#4.-Machine-Learning-Layer">¶</a></h2><h3 id="Apache-Spark-ML-Pipeline">Apache Spark ML Pipeline<a class="anchor-link" href="#Apache-Spark-ML-Pipeline">¶</a></h3><h4 id="Regression-Models">Regression Models<a class="anchor-link" href="#Regression-Models">¶</a></h4><p>The system implements multiple regression techniques:</p>
+<h2 id="4.-Machine-Learning-Layer">4. Machine Learning Layer<a class="anchor-link" href="#4.-Machine-Learning-Layer">¶</a></h2><h3 id="Apache-Spark-ML-Pipeline">Apache Spark ML Pipeline<a class="anchor-link" href="#Apache-Spark-ML-Pipeline">¶</a></h3><h4 id="Regression-Models">Regression Models<a class="anchor-link" href="#Regression-Models">¶</a></h4><p>The system implements non-linear regression techniques and NLP:</p>
 <ol>
-<li><p><strong>Linear Regression</strong></p>
-<ul>
-<li>For linear relationships in game statistics</li>
-<li>Fast training and prediction</li>
-<li>Interpretable coefficients</li>
-</ul>
-</li>
-<li><p><strong>Non-Linear Regression</strong></p>
-<ul>
+<li><strong>Non-Linear Regression</strong><ul>
 <li>Captures complex patterns</li>
 <li>Better accuracy for non-linear relationships</li>
 <li>Examples: logistic regression, decision trees, random forests</li>
+</ul>
+</li>
+<li><strong>NLP and Sentiment analysis</strong><ul>
+<li>Upcoming videogames will be enriched with community scores based on sentiment analysis. Web scraping from public sub-reddit such as <code>r/Games</code> and from Metacritic website, provides information about community sentiment, used in predicion.</li>
 </ul>
 </li>
 </ol>
@@ -7651,8 +7647,104 @@ main {
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h4 id="NLP-and-Sentiment-analysis">NLP and Sentiment analysis<a class="anchor-link" href="#NLP-and-Sentiment-analysis">¶</a></h4><p>Upcoming videogames will be enriched with community scores based on sentiment analysis.
-Web scraping from public sub-reddit such as <code>r/Games</code> and from Metacritic website, provides information about community sentiment, used in predicion.</p>
+<h5 id="Weighted-Average:-Community-Sentiment-Score">Weighted Average: Community Sentiment Score<a class="anchor-link" href="#Weighted-Average:-Community-Sentiment-Score">¶</a></h5><table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Weight</th>
+<th>Method</th>
+<th>Variable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Reddit</strong></td>
+<td>40%</td>
+<td>Keyword + score analysis on r/gaming posts (last 30 days)</td>
+<td>reddit_score</td>
+</tr>
+<tr>
+<td><strong>Metacritic</strong></td>
+<td>30%</td>
+<td>User score scraped from Metacritic game page, normalized 0–100</td>
+<td>meta_score</td>
+</tr>
+<tr>
+<td><strong>IGDB Metrics</strong></td>
+<td>30%</td>
+<td>hype_factor = min(100, hypes/100 * 50) + follow_factor = min(100, follows/1000 * 50); igdb_score = (hype_factor + follow_factor) / 2</td>
+<td>igdb_score</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div></section><section>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<h5 id="Non-Linear-Regression-&amp;-Classification-Models">Non-Linear Regression &amp; Classification Models<a class="anchor-link" href="#Non-Linear-Regression-&amp;-Classification-Models">¶</a></h5><table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Algorithm</th>
+<th>Target Label</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>predicted_rating</strong></td>
+<td>GBTRegressor</td>
+<td>rating</td>
+<td><sub><sup> GBT captures complex non-linear interactions. Sentiment is included as a direct feature; the model learns its weight automatically. </sup></sub></td>
+</tr>
+<tr>
+<td><strong>predicted_rating_count</strong></td>
+<td>RandomForestRegressor</td>
+<td>rating_count</td>
+<td><sub><sup> RF reduces overfitting via bagging; robust on small datasets. Sentiment not needed for engagement volume. </sup></sub></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div></section><section>
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell">
+<div class="jp-Cell-inputWrapper" tabindex="0">
+<div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
+</div>
+<div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
+</div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Algorithm</th>
+<th>Target Label</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>predicted_longevity</strong></td>
+<td>RandomForestRegressor</td>
+<td>longevity_score</td>
+<td><sub><sup> Longevity has high variance; RF ensemble averaging stabilises predictions. Extended features include critic ratings. </sup></sub></td>
+</tr>
+<tr>
+<td><strong>predicted_success_class</strong></td>
+<td>LogisticRegression (classifier)</td>
+<td>success_level (categorical)</td>
+<td><sub><sup> success_level is a discrete label, so classification is used instead of regression. </sup></sub></td>
+</tr>
+</tbody>
+</table>
 </div>
 </div>
 </div>
